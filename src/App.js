@@ -1,70 +1,203 @@
 import React from 'react';
+import axios from 'axios';
 
+import './App.css';
 
+const API_ENDPOINT = 'https://hn.algolia.com/api/v1/search?query=';
 
-function App() {
-  const stories = [
-    {
-      title: 'React',
-      url: 'https://reactjs.org',
-      author: 'Jordan Walke',
-      num_comments: 3,
-      points: 4,
-      objectID: 0,
-    },
-    {
-      title: 'Redux',
-      url: 'https://redux.js.org/',
-      author: 'Dan Abramov, Andrew Clark',
-      num_comments: 2,
-      points: 5,
-      objectID: 1,
-    }
-  ];
-
-  const [searchTerm, setSearchTerm] = React.useState('React');
-
-  const handleSearch = event => {
-    setSearchTerm(event.target.value);
-  }
-
-  const searchedStories = stories.filter(story =>
-    story.title.toLowerCase().includes(searchTerm.toLowerCase())
+const useSemiPersistentState = (key, initialState) =>{
+  const [value, setValue] = React.useState(
+    localStorage.getItem(key) || initialState
   );
 
+  React.useEffect(()=>{
+    localStorage.setItem(key, value);
+  }, [value, key]);
+
+  return [value, setValue]; 
+};
+
+const storiesReducer = (state, action)/*CHECK HOW ARGUMENTS ARE PASSED HERE*/ => {
+  switch (action.type) {
+    case 'STORIES_FETCH_INIT':
+      return {
+        ...state,
+        isLoading: true,
+        isError: false,
+      };
+    case 'STORIES_FETCH_SUCCESS':
+      return {
+        ...state,
+        isLoading: false,
+        isError: false,
+        data: action.payload,
+      };
+    case 'STORIES_FETCH_FAILURE':
+      return {
+        ...state,
+        isLoading: false,
+        isError: true,
+      };
+    case 'REMOVE_STORY':
+      return {
+        ...state,
+        data: state.data.filter(
+          story => action.payload.objectID !== story.objectID
+        ),
+      };
+    default:
+      throw new Error();
+  }
+};
+
+const InputWithLabel = ({
+  id, 
+  value, 
+  type="text", 
+  onInputChange, 
+  isFocused, 
+  children}) => {
+  const inputRef = React.useRef();
+
+  React.useEffect(()=>{
+    if (isFocused && inputRef.current){
+      inputRef.current.focus();
+    }
+  }, [isFocused]);
+  
   return(
-    <div>
-      <h1>My Hacker Stories</h1>
-      <Search search={searchTerm} onSearch={handleSearch}/>
-      <hr />
-      <List list={searchedStories}/>
-    </div>
-  )
-}
+  <>
+    <label htmlFor={id} className="label">
+      {children}
+    </label>
+    &nbsp;
+    <input
+    ref={inputRef} 
+    id={id}
+    type={type}
+    value={value}
+    onChange={onInputChange}
+    className="input"
+    />
+  </>
+)};
 
-const Search = ({search, onSearch}) => (
-    <div>
-      <label htmlFor="search">Search: </label>
-      <input 
-        id="search" 
-        type="text" 
-        value={search}
-        onChange={onSearch}/>
-    </div>
-);
+const List = ({list, onRemoveItem}) =>
+  list.map(
+    item => <Item key={item.objectID} item={item} onRemoveItem={onRemoveItem}/>
+    );
 
-const List = ({list}) =>
-  list.map(item => <Item key={item.objectID} item={item} />);
-
-const Item = ({item}) => (
-  <div>
-    <span>
+const Item = ({item, onRemoveItem}) => (
+  <div className="item">
+    <span style={{width: '40%'}}>
       <a href={item.url}>{item.title}</a>
     </span>
-    <span>{item.author}</span>
-    <span>{item.num_comments}</span>
-    <span>{item.points}</span>
+    <span style={{width: '10%'}}>{item.author}</span>
+    <span style={{width: '10%'}}>{item.num_comments}</span>
+    <span style={{width: '10%'}}>{item.points}</span>
+    <span style={{width: '10%'}}>
+      <button 
+        type="button" 
+        onClick={() => onRemoveItem(item)}
+        className="button button_small"
+      >
+        Dismiss
+      </button>
+    </span>
   </div>
 );
+
+  const SearchForm = ({
+    searchTerm,
+    onSearchInput,
+    onSearchSubmit
+  }) => (
+    <form onSubmit={onSearchSubmit} className="search-form">
+        <InputWithLabel 
+          id="search" 
+          value={searchTerm} 
+          isFocused 
+          onInputChange={onSearchInput}
+        >
+          <strong>Search:</strong>
+        </InputWithLabel>
+        <button 
+          type = "submit" 
+          disabled={!searchTerm}
+          className="button button_large"
+        >
+          Submit
+        </button>
+      </form>
+  );
+
+function App() {
+  const [searchTerm, setSearchTerm] = useSemiPersistentState('search', 'React');
+
+  const [url, setUrl] = React.useState(
+    `${API_ENDPOINT}${searchTerm}`
+  );
+
+  const [stories, dispatchStories] = React.useReducer(
+    storiesReducer, 
+    {data: [], isLoading: false, isError: false}
+    );
+
+  const handleFetchStories = React.useCallback(async () => {
+    dispatchStories({type: 'STORIES_FETCH_INIT' });
+
+    try{
+      const result = await axios.get(url);
+
+      dispatchStories({
+        type: 'STORIES_FETCH_SUCCESS',
+        payload: result.data.hits
+      });
+    }
+    catch {
+      dispatchStories({type: 'STORIES_FETCH_FAILURE'});
+    }
+
+  }, [url]);
+
+  React.useEffect(() => {
+    handleFetchStories();
+  }, [handleFetchStories])
+
+  const handleRemoveStory = item => {
+    dispatchStories({
+      type: 'REMOVE_STORY',
+      payload: item 
+    });
+  };
+  
+  const handleSearchInput = event => {
+    setSearchTerm(event.target.value);
+  };
+
+  const handleSearchSubmit = event => {
+    setUrl(`${API_ENDPOINT}${searchTerm}`);
+    event.preventDefault();
+  };
+
+  return(
+    <div className="container">
+      <h1 className="headline-primary">My Hacker Stories</h1>
+
+      <SearchForm 
+        searchTerm={searchTerm} 
+        onSearchSubmit={handleSearchSubmit}
+        onSearchInput={handleSearchInput}
+      />
+
+      {stories.isError && <p>Something went wrong...</p>} {/*Rendering variable names*/}
+      {stories.isLoading ? 
+        (<p>Loading...</p>) 
+        : 
+        (<List list={stories.data} onRemoveItem={handleRemoveStory}/>)
+      }
+    </div>
+  );
+};
 
 export default App;
